@@ -1,4 +1,4 @@
-# KDP-thermal-conductivity-MD
+# KDP-thermal--MD
 This repository provides essential input files to reproduce the molecular 
 dynamics simulations reported in:
 
