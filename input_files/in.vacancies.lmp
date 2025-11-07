@@ -1,0 +1,111 @@
+# KDP晶体热导率计算脚本（nemd方法）
+# 模型尺寸：37.2605x37.2605x278.96 Å^3 超胞
+
+
+#模拟体系在xyz三个方向的尺寸
+variable  x equal 37.2605
+variable  y equal 37.2605
+variable  z equal 278.96
+
+#模型参数，real单位
+units    real
+dimension 3
+boundary p p p
+atom_style  full
+
+#近邻列表定义
+neighbor        2.0 bin                 # 增大邻域列表缓冲
+neigh_modify    every 10 delay 0 check yes
+
+timestep        0.1#10000步1ps
+     
+# ---------- 模型设置 ----------
+read_data       2.data           # 读取预建好的KDP结构数据文件
+                                        # 数据文件需包含原子类型(1=K,2=P,3=O,4=H)
+                                        # 盒子尺寸已包含xlo/xhi等参数
+
+# ---------- 势函数设置 ----------
+pair_style      hybrid/overlay lj96/cut 10.0 coul/long 10.0
+bond_style harmonic
+angle_style harmonic
+kspace_style    pppm 1e-4
+# 设置原子电荷
+set type 1 charge +0.835
+set type 2 charge +0.461
+set type 3 charge +0.312
+set type 4 charge -0.454
+set type 5 charge -0.506
+
+pair_coeff      1 1 lj96/cut 0.2030 3.585        # K-K相互作用
+pair_coeff      2 2 lj96/cut 0.1750 4.500        # P-P
+pair_coeff      3 3 lj96/cut 0.0091 1.098        # H-H 
+pair_coeff      4 4 lj96/cut 0.0385 3.500        # O1-O1
+pair_coeff      5 5 lj96/cut 0.0560 3.800        # O2-O2
+
+bond_coeff  1  430.0000     1.6000
+bond_coeff  2  500.0000     1.037 
+
+angle_coeff   1   25.0000   109.5000
+angle_coeff   2  148.8000     110.5000
+
+pair_coeff  * * coul/long
+pair_coeff 4 5 hbond/dreiding/lj 17.5 2.5 
+
+#删除原子形成空位
+group H type 3
+region cube block INF INF INF INF INF INF
+delete_atoms random fraction 0.04 yes H cube 372434 bond yes 
+reset_atoms id
+
+write_data all.data
+
+thermo 1000
+thermo_style custom step temp pe ke etotal vol press lx ly lz
+dump 1   all custom 1000 KDP_nvtnpt_10.xyz id type x y z
+#温度初始化
+velocity  all create 300  87287
+
+#npt下弛豫
+fix 2   all npt temp 300 300 10 aniso 0 0 100
+run     100000
+unfix 2
+
+
+#设置热源、冷源区域
+region          hot block  INF INF INF INF −0.653812500  2.135787500 units box
+region          cold block   INF INF INF INF 138.8261875 152.7741875 units box
+#计算冷热源区域温度
+compute         Thot all temp/region hot
+compute         Tcold all temp/region cold
+
+#设定nve系综
+fix    1 all nve
+#热源处持续输入热量
+fix             hot all heat 1 0.1 region hot
+#冷源处持续抽走热量
+fix             cold all heat 1 -0.1 region cold
+#设定热力学参数输出
+thermo_style    custom step temp c_Thot c_Tcold
+thermo          1000
+#运行10000步
+run            50000
+unfix 1
+unfix hot
+unfix cold
+#计算原子动能
+compute    ke all ke/atom
+variable kb equal 0.001987 #玻尔兹曼常数，kcal（mol·K）
+#根据原子动能计算原子温度
+variable temp atom c_ke/1.5/${kb}
+#沿x方向进行切块，把原子划入到不同的块中
+compute         layers all chunk/atom bin/1d z lower 0.02 units reduced
+#计算块内原子温度
+fix    2  all ave/chunk 10 100 1000 layers v_temp file profile.heat
+
+#计算温差
+variable        tdiff equal f_2[1][3]-f_2[26][3]
+
+#输出平均温差
+thermo_style    custom step temp f_2[1][3] f_2[26][3] v_tdiff f_ave
+#运行20000步
+run             300000
